@@ -1,74 +1,68 @@
-# eeg_server_raspi.py
-
 import asyncio
 import websockets
 import json
 import numpy as np
 from brainflow.board_shim import BoardShim, BrainFlowInputParams, BoardIds
-from scipy.signal import iirnotch, filtfilt
-import signal
-import sys
 
+# Konfigurasi BrainFlow
 params = BrainFlowInputParams()
-params.serial_port = '/dev/ttyUSB0'  # Pastikan ini sesuai (cek pakai `ls /dev/tty*`)
+params.serial_port = '/dev/ttyUSB0'  # Ganti sesuai dengan port USB OpenBCI di Raspberry Pi
 
+# Inisialisasi board
 board_id = BoardIds.CYTON_DAISY_BOARD.value
 board = BoardShim(board_id, params)
+
+# Daftar channel EEG yang tersedia
 eeg_channels = BoardShim.get_eeg_channels(board_id)
-sampling_rate = BoardShim.get_sampling_rate(board_id)
 
-notch_filter_enabled = True
-buffer_size = 256
+# Label channel custom (bisa disesuaikan)
+channel_names = {
+    1: "ECG", 2: "PPG", 3: "PCG", 4: "EMG1", 5: "EMG2", 6: "MYOMETER",
+    7: "SPIRO", 8: "TEMPERATURE", 9: "NIBP", 10: "OXYGEN",
+    11: "EEG CH11", 12: "EEG CH12", 13: "EEG CH13",
+    14: "EEG CH14", 15: "EEG CH15", 16: "EEG CH16"
+}
 
-# Setup board
-def start_board():
-    board.prepare_session()
-    board.config_board('x1060100Xx2010000Xx3010000Xx4060000Xx5060000Xx6010000Xx7010000Xx8010000XxQ010000XxW010000X')
-    board.start_stream()
-    print("✅ OpenBCI Stream Started")
-
-# Notch filter
-def notch_filter(data, freq=60.0, fs=250.0, quality=30):
-    b, a = iirnotch(freq / (0.5 * fs), quality)
-    return filtfilt(b, a, data)
-
-# WebSocket handler
+# Fungsi handler WebSocket (wajib 2 parameter)
 async def eeg_handler(websocket, path):
-    print("🌐 Client connected")
+    print("🔌 Client connected")
     try:
         while True:
-            data = board.get_current_board_data(buffer_size)
-            output = {}
-
+            # Ambil 50 sample data terbaru
+            data = board.get_current_board_data(50)
+            eeg_data = {}
             for ch in eeg_channels:
-                ch_data = data[ch, :]
-                if notch_filter_enabled:
-                    ch_data = notch_filter(ch_data, 60, sampling_rate)
-                output[f'channel_{ch}'] = ch_data.tolist()
-
-            await websocket.send(json.dumps(output))
-            await asyncio.sleep(0.1)  # 10Hz
+                label = channel_names.get(ch, f"CH{ch}")
+                eeg_data[label] = data[ch].tolist()
+            await websocket.send(json.dumps(eeg_data))
+            await asyncio.sleep(0.05)  # 20 Hz update rate
     except websockets.ConnectionClosed:
         print("❌ Client disconnected")
 
-# Main server runner
+# Fungsi utama menjalankan WebSocket server
 async def main():
-    start_board()
-    async with websockets.serve(eeg_handler, "0.0.0.0", 8765):
-        print("🚀 WebSocket Server running at ws://0.0.0.0:8765")
-        await asyncio.Future()
+    ip = '192.168.45.249'  # Ganti dengan IP Raspberry Pi kamu
+    port = 8765
 
-# Clean shutdown
-def shutdown(signal_received, frame):
-    print("🛑 Stopping stream and releasing session...")
-    board.stop_stream()
-    board.release_session()
-    sys.exit(0)
+    # Persiapkan koneksi board
+    print("🔄 Preparing board session...")
+    board.prepare_session()
+    board.start_stream()
+    print(f"✅ EEG data streaming from board")
 
-# Register signal handlers
-signal.signal(signal.SIGINT, shutdown)
-signal.signal(signal.SIGTERM, shutdown)
+    # Jalankan WebSocket server
+    async with websockets.serve(eeg_handler, ip, port):
+        print(f"✅ WebSocket Server running at ws://{ip}:{port}")
+        await asyncio.Future()  # Keep running forever
 
-# Run
-if __name__ == "__main__":
-    asyncio.run(main())
+# Jalankan script
+if __name__ == '__main__':
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("\n🛑 Server interrupted by user")
+    finally:
+        print("🧹 Cleaning up BrainFlow session...")
+        board.stop_stream()
+        board.release_session()
+        print("✅ Done")
