@@ -1,6 +1,7 @@
 import asyncio
 import json
 import numpy as np
+import time
 from brainflow.board_shim import BoardShim, BrainFlowInputParams, BoardIds
 from websockets.legacy.server import serve  # ✅ PENTING: gunakan legacy API
 
@@ -29,9 +30,16 @@ async def eeg_handler(websocket, path):
         while True:
             data = board.get_current_board_data(50)  # Ambil 50 sample terbaru
             eeg_data = {}
+            timestamp = int(time.time() * 1000)  # Timestamp dalam milidetik (UNIX epoch)
+            
             for ch in eeg_channels:
                 label = channel_names.get(ch, f"CH{ch}")
-                eeg_data[label] = data[ch].tolist()
+                eeg_data[label] = {
+                    'values': data[ch].tolist(),
+                    'timestamp': timestamp  # Menambahkan timestamp
+                }
+
+            # Kirim data dengan timestamp
             await websocket.send(json.dumps(eeg_data))
             await asyncio.sleep(0.05)  # Kirim data setiap 50ms (~20Hz)
     except Exception as e:
