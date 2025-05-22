@@ -15,11 +15,18 @@ board = BoardShim(board_id, params)
 # Channel EEG dan label sensor
 eeg_channels = BoardShim.get_eeg_channels(board_id)
 channel_names = {
-    1: "ECG", 2: "PPG", 3: "PCG", 4: "EMG1", 5: "EMG2", 
-    6: "MYOMETER",
-    7: "SPIRO", 8: "TEMPERATURE", 9: "NIBP", 10: "OXYGEN",
-    11: "EEG CH11", 12: "EEG CH12", 13: "EEG CH13", 14: "EEG CH14",
-    15: "EEG CH15", 16: "EEG CH16"
+    1: "LEAD_I", 
+    2: "LEAD_II", 
+    3: "LEAD_III", 
+    4: "AVR", 
+    5: "AVL", 
+    6: "AVF",
+    7: "V1", 
+    8: "V2", 
+    9: "V3", 
+    10: "V4",
+    11: "V5", 
+    12: "V6"
 }
 
 # WebSocket handler
