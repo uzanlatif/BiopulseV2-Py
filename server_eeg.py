@@ -56,7 +56,7 @@ async def eeg_handler(websocket, path):
 # Fungsi utama
 async def main():
     ip = '172.30.81.62'  # Raspi IP Address
-    port = 8765
+    port = 7777
 
     print("🔄 Preparing board session...")
     board.prepare_session()
