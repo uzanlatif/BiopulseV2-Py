@@ -2,6 +2,8 @@ import tkinter as tk
 from tkinter import messagebox
 import subprocess
 import signal
+import os
+import sys
 
 class ServerManagerApp:
     def __init__(self, root):
@@ -11,42 +13,46 @@ class ServerManagerApp:
         self.selected_server = tk.StringVar(value="server_mbs.py")
         self.process = None
 
-        # Radio buttons untuk memilih server
+        # GUI: Radio buttons for server selection
         tk.Radiobutton(root, text="Server MBS", variable=self.selected_server, value="server_mbs.py").pack(anchor='w')
         tk.Radiobutton(root, text="Server ECG", variable=self.selected_server, value="server_ecg.py").pack(anchor='w')
         tk.Radiobutton(root, text="Server EEG", variable=self.selected_server, value="server_eeg.py").pack(anchor='w')
 
-        # Tombol untuk menjalankan server
+        # GUI: Run & Stop buttons
         tk.Button(root, text="Run Server", command=self.run_selected_server).pack(pady=10)
-
-        # Tombol untuk stop server
         tk.Button(root, text="Stop Server", command=self.stop_server).pack(pady=5)
 
     def run_selected_server(self):
-        # Jika ada proses server yang berjalan, hentikan dulu
-        if self.process and self.process.poll() is None:
-            self.stop_server()
+        self.stop_server()  # Stop any existing server
 
-        server_script = self.selected_server.get()
+        script = self.selected_server.get()
         try:
-            # Jalankan server script baru
-            self.process = subprocess.Popen(["python", server_script])
-            messagebox.showinfo("Info", f"{server_script} is running.")
+            # Start subprocess in a new process group
+            self.process = subprocess.Popen(
+                [sys.executable, script],
+                preexec_fn=os.setsid if os.name != 'nt' else None,  # Unix
+                creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if os.name == 'nt' else 0  # Windows
+            )
+            messagebox.showinfo("Info", f"{script} is running.")
         except Exception as e:
-            messagebox.showerror("Error", f"Failed to run {server_script}:\n{e}")
+            messagebox.showerror("Error", f"Failed to start server:\n{e}")
 
     def stop_server(self):
         if self.process and self.process.poll() is None:
-            # Menghentikan proses server yang berjalan
-            self.process.terminate()
             try:
+                if os.name == 'nt':
+                    self.process.send_signal(signal.CTRL_BREAK_EVENT)  # Windows
+                else:
+                    os.killpg(os.getpgid(self.process.pid), signal.SIGTERM)  # Unix
+
                 self.process.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                self.process.kill()
-            messagebox.showinfo("Info", "Server stopped.")
-            self.process = None
+                messagebox.showinfo("Info", "Server stopped.")
+            except Exception as e:
+                messagebox.showerror("Error", f"Failed to stop server:\n{e}")
+            finally:
+                self.process = None
         else:
-            messagebox.showinfo("Info", "No server is running.")
+            self.process = None  # Clear handle just in case
 
 if __name__ == "__main__":
     root = tk.Tk()
