@@ -56,12 +56,12 @@ async def eeg_handler(websocket, path):
 # Fungsi utama
 async def main():
     ip = '172.30.81.62'  # Raspi IP Address
-    port = 8765
+    port = 5555
 
     print("🔄 Preparing board session...")
     board.prepare_session()
     board.start_stream()
-    print(f"✅ EEG data streaming from board")
+    print(f"✅ MBS data streaming from board")
 
     async with websockets.serve(eeg_handler, ip, port):
         print(f"🌐 WebSocket Server running at ws://{ip}:{port}")

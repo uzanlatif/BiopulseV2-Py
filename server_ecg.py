@@ -68,7 +68,7 @@ async def main():
     print("🔄 Preparing board session...")
     board.prepare_session()
     board.start_stream()
-    print(f"✅ EEG data streaming from board")
+    print(f"✅ ECG data streaming from board")
 
     async with websockets.serve(eeg_handler, ip, port):
         print(f"🌐 WebSocket Server running at ws://{ip}:{port}")
