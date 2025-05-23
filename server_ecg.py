@@ -84,7 +84,7 @@ async def main():
         print("✅ Streaming started")
 
         ip = '172.30.81.62'
-        port = 6666
+        port = 8888
         async with websockets.serve(eeg_handler, ip, port):
             print(f"🌐 WebSocket Server running at ws://{ip}:{port}")
             await asyncio.Future()  # run forever
