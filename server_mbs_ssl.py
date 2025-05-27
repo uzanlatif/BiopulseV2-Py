@@ -4,19 +4,19 @@ import json
 import time
 import signal
 import sys
+import ssl
 from brainflow.board_shim import BoardShim, BrainFlowInputParams, BoardIds, BrainFlowError
 
 # Global board instance
 board = None
 board_initialized = False
 
-# Handle Ctrl+C or SIGTERM for graceful shutdown
+# Signal handler for graceful shutdown
 def signal_handler(sig, frame):
     print("\n🛑 Signal received, cleaning up...")
     cleanup()
     sys.exit(0)
 
-# Cleanup BrainFlow session
 def cleanup():
     global board, board_initialized
     if board and board_initialized:
@@ -31,11 +31,11 @@ def cleanup():
     board_initialized = False
     print("✅ Cleaned up")
 
-# Register signal handlers
+# Register signal handler
 signal.signal(signal.SIGTERM, signal_handler)
 signal.signal(signal.SIGINT, signal_handler)
 
-# WebSocket handler
+# EEG handler
 async def eeg_handler(websocket, path):
     print("🔌 Client connected")
     try:
@@ -59,27 +59,25 @@ async def eeg_handler(websocket, path):
                 ]
 
             await websocket.send(json.dumps(sensor_data))
-            await asyncio.sleep(0.1)  # Send data every 100ms
+            await asyncio.sleep(0.3)
     except websockets.ConnectionClosed:
         print("❌ Client disconnected")
     except Exception as e:
         print("🚨 Handler error:", e)
 
-# BrainFlow parameters
+# Configuration
 params = BrainFlowInputParams()
-params.serial_port = '/dev/ttyUSB0'  # Change this if your USB dongle is at a different port
+params.serial_port = '/dev/ttyUSB0'
 board_id = BoardIds.CYTON_DAISY_BOARD.value
 eeg_channels = BoardShim.get_eeg_channels(board_id)
 
-# Optional: Rename channels for better readability
 channel_names = {
-    0: "EEG CH1", 1: "EEG CH2", 2: "EEG CH3", 3: "EEG CH4",
-    4: "EEG CH5", 5: "EEG CH6", 6: "EEG CH7", 7: "EEG CH8",
-    8: "EEG CH9", 9: "EEG CH10", 10: "EEG CH11", 11: "EEG CH12",
-    12: "EEG CH13", 13: "EEG CH14", 14: "EEG CH15", 15: "EEG CH16"
+    1: "ECG", 2: "PPG", 3: "PCG", 4: "EMG1", 5: "EMG2", 
+    6: "MYOMETER", 7: "SPIRO", 8: "TEMPERATURE", 9: "NIBP", 10: "OXYGEN",
+    11: "EEG CH11", 12: "EEG CH12", 13: "EEG CH13", 14: "EEG CH14",
+    15: "EEG CH15", 16: "EEG CH16"
 }
 
-# Main async function
 async def main():
     global board, board_initialized
     board = BoardShim(board_id, params)
@@ -89,14 +87,20 @@ async def main():
         board.prepare_session()
         board.start_stream()
         board_initialized = True
-        print("✅ EEG stream started")
+        print("✅ MBS streaming started")
 
-        ip = '0.0.0.0'  # Or replace with actual IP like '172.30.81.62'
-        port = 9999
+        ip = '0.0.0.0'  # Listen on all interfaces
+        port = 5555
 
-        async with websockets.serve(eeg_handler, ip, port):
-            print(f"🌐 WebSocket Server running at ws://{ip}:{port}")
-            await asyncio.Future()  # Keeps the server running
+        # Setup SSL context
+        ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        ssl_context.load_cert_chain(certfile='/home/pi/ssl/cert.pem', keyfile='/home/pi/ssl/key.pem')
+
+        async with websockets.serve(
+            eeg_handler, ip, port, ssl=ssl_context
+        ):
+            print(f"🔒 Secure WebSocket (WSS) running at wss://<raspi-ip>:{port}")
+            await asyncio.Future()
     except BrainFlowError as e:
         print("🚨 BrainFlow error:", e)
     except Exception as e:
