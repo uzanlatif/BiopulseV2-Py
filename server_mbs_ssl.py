@@ -5,13 +5,14 @@ import time
 import signal
 import sys
 import ssl
+import os
 from brainflow.board_shim import BoardShim, BrainFlowInputParams, BoardIds, BrainFlowError
 
 # Global board instance
 board = None
 board_initialized = False
 
-# Signal handler for graceful shutdown
+# Signal handler
 def signal_handler(sig, frame):
     print("\n🛑 Signal received, cleaning up...")
     cleanup()
@@ -65,14 +66,14 @@ async def eeg_handler(websocket, path):
     except Exception as e:
         print("🚨 Handler error:", e)
 
-# Configuration
+# BrainFlow config
 params = BrainFlowInputParams()
 params.serial_port = '/dev/ttyUSB0'
 board_id = BoardIds.CYTON_DAISY_BOARD.value
 eeg_channels = BoardShim.get_eeg_channels(board_id)
 
 channel_names = {
-    1: "ECG", 2: "PPG", 3: "PCG", 4: "EMG1", 5: "EMG2", 
+    1: "ECG", 2: "PPG", 3: "PCG", 4: "EMG1", 5: "EMG2",
     6: "MYOMETER", 7: "SPIRO", 8: "TEMPERATURE", 9: "NIBP", 10: "OXYGEN",
     11: "EEG CH11", 12: "EEG CH12", 13: "EEG CH13", 14: "EEG CH14",
     15: "EEG CH15", 16: "EEG CH16"
@@ -89,12 +90,16 @@ async def main():
         board_initialized = True
         print("✅ MBS streaming started")
 
-        ip = '0.0.0.0'  # Listen on all interfaces
+        ip = '0.0.0.0'
         port = 5555
 
-        # Setup SSL context
+        # Use SSL from same folder
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        cert_path = os.path.join(current_dir, "cert.pem")
+        key_path = os.path.join(current_dir, "key.pem")
+
         ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-        ssl_context.load_cert_chain(certfile='/home/pi/ssl/cert.pem', keyfile='/home/pi/ssl/key.pem')
+        ssl_context.load_cert_chain(certfile=cert_path, keyfile=key_path)
 
         async with websockets.serve(
             eeg_handler, ip, port, ssl=ssl_context
