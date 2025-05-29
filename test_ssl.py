@@ -78,8 +78,10 @@ board_id = BoardIds.CYTON_DAISY_BOARD.value
 eeg_channels = BoardShim.get_eeg_channels(board_id)
 
 channel_names = {
+    1: "ECG", 2: "PPG", 3: "PCG", 4: "EMG1", 5: "EMG2",
+    6: "MYOMETER", 7: "SPIRO", 8: "TEMPERATURE", 9: "NIBP", 10: "OXYGEN",
     11: "EEG CH11", 12: "EEG CH12", 13: "EEG CH13", 14: "EEG CH14",
-    15: "EEG CH15", 16: "EEG CH16", 17: "EEG CH17", 18: "EEG CH18"
+    15: "EEG CH15", 16: "EEG CH16"
 }
 
 async def main():
@@ -109,7 +111,7 @@ async def main():
         data = board.get_board_data()
         print(f"[DEBUG] Initial data shape: {data.shape}")
 
-        ip = '0.0.0.0'
+        ip = '10.42.0.1'
         port = 5555
 
         # SSL setup
