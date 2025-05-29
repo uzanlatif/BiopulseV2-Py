@@ -36,7 +36,7 @@ def cleanup():
 signal.signal(signal.SIGTERM, signal_handler)
 signal.signal(signal.SIGINT, signal_handler)
 
-# EEG handler
+# EEG handler (raw ADC count)
 async def eeg_handler(websocket, path):
     print("🔌 Client connected")
     try:
@@ -44,7 +44,7 @@ async def eeg_handler(websocket, path):
         interval = 1.0 / sampling_rate
 
         while True:
-            raw_data = board.get_current_board_data(50)
+            raw_data = board.get_board_data(50)  # ✅ raw ADC count
             print(f"[DEBUG] raw_data shape: {raw_data.shape}")
 
             if raw_data.shape[1] == 0:
@@ -59,12 +59,11 @@ async def eeg_handler(websocket, path):
                 label = channel_names.get(ch, f"CH{ch}")
                 samples = raw_data[ch]
 
-                # 🧪 Log nilai min/max
-                print(f"[DEBUG] {label} ➜ Min: {min(samples):.2f}, Max: {max(samples):.2f}")
+                print(f"[DEBUG] RAW {label} ➜ Min: {min(samples)}, Max: {max(samples)}")
 
                 sensor_data[label] = [
                     {
-                        "y": float(val),
+                        "y": int(val),  # Raw ADC value (integer)
                         "__timestamp__": timestamp_now - (len(samples) - i - 1) * interval
                     }
                     for i, val in enumerate(samples)
@@ -87,9 +86,7 @@ channel_names = {
     1: "ECG", 2: "PPG", 3: "PCG", 4: "EMG1", 5: "EMG2",
     6: "MYOMETER", 7: "SPIRO", 8: "TEMPERATURE", 9: "NIBP", 10: "OXYGEN",
     11: "EEG CH11", 12: "EEG CH12", 13: "EEG CH13", 14: "EEG CH14",
-    15: "EEG CH15", 16: "EEG CH16", 17: "EEG CH17", 18: "EEG CH18",
-    19: "EEG CH19", 20: "EEG CH20", 21: "EEG CH21", 22: "EEG CH22",
-    23: "EEG CH23", 24: "EEG CH24"
+    15: "EEG CH15", 16: "EEG CH16"
 }
 
 async def main():
@@ -100,28 +97,26 @@ async def main():
         print("🔄 Preparing BrainFlow session...")
         board.prepare_session()
 
-        # ✅ Konfigurasikan gain maksimum (24) ke semua 16 channel EEG
-        config_gain_24 = (
-            'x1240000Xx2240000Xx3240000Xx4240000Xx5240000Xx6240000Xx7240000Xx8240000X' +
-            'xQ240000XxW240000XxE240000XxR240000XxT240000XxY240000XxU240000XxI240000X'
-        )
-        board.config_board(config_gain_24)
-        time.sleep(0.5)  # beri waktu apply
+        # ✅ Optional: Config gain (default = 24), bisa disesuaikan jika perlu
+        # board.config_board('x1240000Xx2240000Xx3240000Xx4240000Xx5240000Xx6240000Xx7240000Xx8240000X'
+        #                    'xQ240000XxW240000XxE240000XxR240000XxT240000XxY240000XxU240000XxI240000X')
+        time.sleep(0.5)
 
         board.start_stream()
-        time.sleep(1)  # tunggu streaming
+        time.sleep(1)
         board_initialized = True
         print("✅ MBS streaming started")
 
-        # 🔎 Cek apakah data tersedia
+        # Cek data awal
         print("🔎 Checking data availability...")
-        time.sleep(3)
+        time.sleep(2)
         data = board.get_board_data()
         print(f"[DEBUG] Initial board data shape: {data.shape}")
 
         ip = '0.0.0.0'
         port = 5555
 
+        # SSL cert (optional for WSS, required if used)
         current_dir = os.path.dirname(os.path.abspath(__file__))
         cert_path = os.path.join(current_dir, "cert.pem")
         key_path = os.path.join(current_dir, "key.pem")
