@@ -45,6 +45,13 @@ async def eeg_handler(websocket, path):
 
         while True:
             raw_data = board.get_current_board_data(50)
+            print(f"[DEBUG] raw_data shape: {raw_data.shape}")
+
+            if raw_data.shape[1] == 0:
+                print("[⚠️ WARNING] No data received from board yet.")
+                await asyncio.sleep(0.5)
+                continue
+
             sensor_data = {}
             timestamp_now = time.time()
 
@@ -52,7 +59,7 @@ async def eeg_handler(websocket, path):
                 label = channel_names.get(ch, f"CH{ch}")
                 samples = raw_data[ch]
 
-                # 🧪 Tambah log untuk nilai min/max
+                # 🧪 Log nilai min/max
                 print(f"[DEBUG] {label} ➜ Min: {min(samples):.2f}, Max: {max(samples):.2f}")
 
                 sensor_data[label] = [
@@ -72,7 +79,7 @@ async def eeg_handler(websocket, path):
 
 # BrainFlow config
 params = BrainFlowInputParams()
-params.serial_port = '/dev/ttyUSB0'  # ganti jika port beda
+params.serial_port = '/dev/ttyUSB0'  # Ganti jika port berbeda
 board_id = BoardIds.CYTON_DAISY_BOARD.value
 eeg_channels = BoardShim.get_eeg_channels(board_id)
 
@@ -91,13 +98,20 @@ async def main():
         print("🔄 Preparing BrainFlow session...")
         board.prepare_session()
         board.start_stream()
+        time.sleep(1)  # beri waktu board kirim data
         board_initialized = True
         print("✅ MBS streaming started")
+
+        # 🔎 Cek apakah data tersedia
+        print("🔎 Checking data availability...")
+        time.sleep(3)  # tunggu agar data masuk
+        data = board.get_board_data()
+        print(f"[DEBUG] Initial board data shape: {data.shape}")
 
         ip = '0.0.0.0'
         port = 5555
 
-        # Gunakan SSL (WSS) jika diperlukan
+        # Gunakan SSL (WSS)
         current_dir = os.path.dirname(os.path.abspath(__file__))
         cert_path = os.path.join(current_dir, "cert.pem")
         key_path = os.path.join(current_dir, "key.pem")
