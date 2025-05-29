@@ -12,6 +12,7 @@ from brainflow.board_shim import BoardShim, BrainFlowInputParams, BoardIds, Brai
 board = None
 board_initialized = False
 
+# Signal handler
 def signal_handler(sig, frame):
     print("\n🛑 Signal received, cleaning up...")
     cleanup()
@@ -34,6 +35,7 @@ def cleanup():
 signal.signal(signal.SIGTERM, signal_handler)
 signal.signal(signal.SIGINT, signal_handler)
 
+# EEG handler
 async def eeg_handler(websocket, path):
     print("🔌 Client connected")
     try:
@@ -41,10 +43,10 @@ async def eeg_handler(websocket, path):
         interval = 1.0 / sampling_rate
 
         while True:
-            raw_data = board.get_board_data(50)  # ✅ raw ADC output
+            raw_data = board.get_board_data(50)  # ✅ raw ADC
             if raw_data.shape[1] == 0:
-                print("[⚠️ WARNING] No data received from board yet.")
-                await asyncio.sleep(0.5)
+                print("⚠️ No data yet from board.")
+                await asyncio.sleep(0.3)
                 continue
 
             sensor_data = {}
@@ -53,12 +55,9 @@ async def eeg_handler(websocket, path):
             for ch in eeg_channels:
                 label = channel_names.get(ch, f"CH{ch}")
                 samples = raw_data[ch]
-
-                print(f"[DEBUG] RAW {label} ➜ Min: {min(samples)}, Max: {max(samples)}")
-
                 sensor_data[label] = [
                     {
-                        "y": int(val),  # raw ADC value
+                        "y": int(val),  # ✅ raw ADC value
                         "__timestamp__": timestamp_now - (len(samples) - i - 1) * interval
                     }
                     for i, val in enumerate(samples)
@@ -78,10 +77,10 @@ board_id = BoardIds.CYTON_DAISY_BOARD.value
 eeg_channels = BoardShim.get_eeg_channels(board_id)
 
 channel_names = {
-    1: "ECG", 2: "PPG", 3: "PCG", 4: "EMG1", 5: "EMG2",
-    6: "MYOMETER", 7: "SPIRO", 8: "TEMPERATURE", 9: "NIBP", 10: "OXYGEN",
-    11: "EEG CH11", 12: "EEG CH12", 13: "EEG CH13", 14: "EEG CH14",
-    15: "EEG CH15", 16: "EEG CH16"
+    1: "EEG_1", 2: "EEG_2", 3: "EEG_3", 4: "EEG_4", 5: "EEG_5", 6: "EEG_6",
+    7: "EEG_7", 8: "EEG_8", 9: "EEG_9", 10: "EEG_10",
+    11: "EEG_11", 12: "EEG_12", 13: "EEG_13", 14: "EEG_14",
+    15: "EEG_15", 16: "EEG_16"
 }
 
 async def main():
@@ -91,30 +90,13 @@ async def main():
     try:
         print("🔄 Preparing BrainFlow session...")
         board.prepare_session()
-
-        # ✅ Set gain = 1 for all EEG channels (Cyton + Daisy)
-        gain_1_config = (
-            'x1010000Xx2010000Xx3010000Xx4010000Xx5010000Xx6010000Xx7010000Xx8010000X'
-            'xQ010000XxW010000XxE010000XxR010000XxT010000XxY010000XxU010000XxI010000X'
-        )
-        board.config_board(gain_1_config)
-        time.sleep(0.5)
-
         board.start_stream()
-        time.sleep(1)
         board_initialized = True
-        print("✅ Streaming started")
+        print("✅ Raw ADC streaming started")
 
-        # Verify data
-        print("🔎 Verifying data...")
-        time.sleep(2)
-        data = board.get_board_data()
-        print(f"[DEBUG] Initial data shape: {data.shape}")
+        ip = '0.0.0.0'
+        port = 7777
 
-        ip = '10.42.0.1'
-        port = 5555
-
-        # SSL setup
         current_dir = os.path.dirname(os.path.abspath(__file__))
         cert_path = os.path.join(current_dir, "cert.pem")
         key_path = os.path.join(current_dir, "key.pem")
@@ -125,7 +107,7 @@ async def main():
         async with websockets.serve(
             eeg_handler, ip, port, ssl=ssl_context
         ):
-            print(f"🔒 Secure WebSocket running at wss://<raspi-ip>:{port}")
+            print(f"🔒 Secure WebSocket (WSS) running at wss://<raspi-ip>:{port}")
             await asyncio.Future()
     except BrainFlowError as e:
         print("🚨 BrainFlow error:", e)
