@@ -87,7 +87,9 @@ channel_names = {
     1: "ECG", 2: "PPG", 3: "PCG", 4: "EMG1", 5: "EMG2",
     6: "MYOMETER", 7: "SPIRO", 8: "TEMPERATURE", 9: "NIBP", 10: "OXYGEN",
     11: "EEG CH11", 12: "EEG CH12", 13: "EEG CH13", 14: "EEG CH14",
-    15: "EEG CH15", 16: "EEG CH16"
+    15: "EEG CH15", 16: "EEG CH16", 17: "EEG CH17", 18: "EEG CH18",
+    19: "EEG CH19", 20: "EEG CH20", 21: "EEG CH21", 22: "EEG CH22",
+    23: "EEG CH23", 24: "EEG CH24"
 }
 
 async def main():
@@ -97,21 +99,29 @@ async def main():
     try:
         print("🔄 Preparing BrainFlow session...")
         board.prepare_session()
+
+        # ✅ Konfigurasikan gain maksimum (24) ke semua 16 channel EEG
+        config_gain_24 = (
+            'x1240000Xx2240000Xx3240000Xx4240000Xx5240000Xx6240000Xx7240000Xx8240000X' +
+            'xQ240000XxW240000XxE240000XxR240000XxT240000XxY240000XxU240000XxI240000X'
+        )
+        board.config_board(config_gain_24)
+        time.sleep(0.5)  # beri waktu apply
+
         board.start_stream()
-        time.sleep(1)  # beri waktu board kirim data
+        time.sleep(1)  # tunggu streaming
         board_initialized = True
         print("✅ MBS streaming started")
 
         # 🔎 Cek apakah data tersedia
         print("🔎 Checking data availability...")
-        time.sleep(3)  # tunggu agar data masuk
+        time.sleep(3)
         data = board.get_board_data()
         print(f"[DEBUG] Initial board data shape: {data.shape}")
 
         ip = '0.0.0.0'
         port = 5555
 
-        # Gunakan SSL (WSS)
         current_dir = os.path.dirname(os.path.abspath(__file__))
         cert_path = os.path.join(current_dir, "cert.pem")
         key_path = os.path.join(current_dir, "key.pem")
