@@ -6,11 +6,14 @@ import signal
 import sys
 import ssl
 import os
+import numpy as np
+from scipy.signal import iirnotch, filtfilt
 from brainflow.board_shim import BoardShim, BrainFlowInputParams, BoardIds, BrainFlowError
 
-# Global board instance
+# === Global setup ===
 board = None
 board_initialized = False
+use_notch_filter = True  # Set True to match GUI filtering
 
 def signal_handler(sig, frame):
     print("\n🛑 Signal received, cleaning up...")
@@ -34,6 +37,14 @@ def cleanup():
 signal.signal(signal.SIGTERM, signal_handler)
 signal.signal(signal.SIGINT, signal_handler)
 
+# === Filter setup ===
+def notch_filter(data, freq=60, fs=250, Q=30):
+    nyq = 0.5 * fs
+    w0 = freq / nyq
+    b, a = iirnotch(w0, Q)
+    return filtfilt(b, a, data)
+
+# === Handler ===
 async def eeg_handler(websocket, path):
     print("🔌 Client connected")
     try:
@@ -41,7 +52,7 @@ async def eeg_handler(websocket, path):
         interval = 1.0 / sampling_rate
 
         while True:
-            raw_data = board.get_board_data(50)  # ✅ raw ADC output
+            raw_data = board.get_board_data(50)  # shape: [channels, samples]
             if raw_data.shape[1] == 0:
                 print("[⚠️ WARNING] No data received from board yet.")
                 await asyncio.sleep(0.5)
@@ -54,12 +65,20 @@ async def eeg_handler(websocket, path):
                 label = channel_names.get(ch, f"CH{ch}")
                 samples = raw_data[ch]
 
+                # Convert ADC raw to voltage (Cyton ADC = 24-bit, scale ~4.5V)
+                scale = 4.5 / (2**23 - 1)
+                volts = samples * scale  # now in Volts
+
+                if use_notch_filter:
+                    volts = notch_filter(volts, freq=60, fs=sampling_rate)
+
+                # Match GUI value (float)
                 sensor_data[label] = [
                     {
-                        "y": int(val),  # raw ADC value
-                        "__timestamp__": timestamp_now - (len(samples) - i - 1) * interval
+                        "y": float(round(val * 1000, 4)),  # Convert to mV, rounded
+                        "__timestamp__": timestamp_now - (len(volts) - i - 1) * interval
                     }
-                    for i, val in enumerate(samples)
+                    for i, val in enumerate(volts)
                 ]
 
             await websocket.send(json.dumps(sensor_data))
@@ -69,7 +88,7 @@ async def eeg_handler(websocket, path):
     except Exception as e:
         print("🚨 Handler error:", e)
 
-# BrainFlow config
+# === BrainFlow Setup ===
 params = BrainFlowInputParams()
 params.serial_port = '/dev/ttyUSB0'
 board_id = BoardIds.CYTON_DAISY_BOARD.value
@@ -90,12 +109,12 @@ async def main():
         print("🔄 Preparing BrainFlow session...")
         board.prepare_session()
 
-        # ✅ Set gain = 1 for all EEG channels (Cyton + Daisy)
-        gain_1_config = (
-            'x1010000Xx2010000Xx3010000Xx4010000Xx5010000Xx6010000Xx7010000Xx8010000X'
+        # Use same gain config as GUI
+        gui_gain_config = (
+            'x1060100Xx2010000Xx3010000Xx4060000Xx5060000Xx6010000Xx7010000Xx8010000X'
             'xQ010000XxW010000XxE010000XxR010000XxT010000XxY010000XxU010000XxI010000X'
         )
-        board.config_board(gain_1_config)
+        board.config_board(gui_gain_config)
         time.sleep(0.5)
 
         board.start_stream()
@@ -103,15 +122,9 @@ async def main():
         board_initialized = True
         print("✅ Streaming started")
 
-        # Verify data
-        print("🔎 Verifying data...")
-        time.sleep(2)
-        data = board.get_board_data()
-
+        # SSL Setup
         ip = '10.42.0.1'
         port = 5555
-
-        # SSL setup
         current_dir = os.path.dirname(os.path.abspath(__file__))
         cert_path = os.path.join(current_dir, "cert.pem")
         key_path = os.path.join(current_dir, "key.pem")
@@ -119,10 +132,8 @@ async def main():
         ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
         ssl_context.load_cert_chain(certfile=cert_path, keyfile=key_path)
 
-        async with websockets.serve(
-            eeg_handler, ip, port, ssl=ssl_context
-        ):
-            print(f"🔒 Secure WebSocket running at wss://<raspi-ip>:{port}")
+        async with websockets.serve(eeg_handler, ip, port, ssl=ssl_context):
+            print(f"🔒 Secure WebSocket running at wss://{ip}:{port}")
             await asyncio.Future()
     except BrainFlowError as e:
         print("🚨 BrainFlow error:", e)
