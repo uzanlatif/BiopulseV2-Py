@@ -4,7 +4,6 @@ import json
 import time
 import signal
 import sys
-import ssl
 import os
 from brainflow.board_shim import BoardShim, BrainFlowInputParams, BoardIds, BrainFlowError
 
@@ -42,7 +41,7 @@ async def eeg_handler(websocket, path):
         interval = 1.0 / sampling_rate
 
         while True:
-            raw_data = board.get_board_data(50)  # get latest 50 samples
+            raw_data = board.get_board_data(50)  # latest 50 samples
             if raw_data.shape[1] == 0:
                 print("[⚠️ WARNING] No data received from board yet.")
                 await asyncio.sleep(0.5)
@@ -83,7 +82,7 @@ channel_names = {
     15: "EEG CH15", 16: "EEG CH16"
 }
 
-# === Main WebSocket server ===
+# === Main WebSocket server (non-SSL) ===
 async def main():
     global board, board_initialized
     board = BoardShim(board_id, params)
@@ -105,18 +104,11 @@ async def main():
         board_initialized = True
         print("✅ Streaming started")
 
-        # SSL configuration
-        ip = '10.42.0.1'  # replace with your Raspberry Pi or server IP
+        ip = '10.42.0.1'  # update to match your RPi/server IP
         port = 5555
-        current_dir = os.path.dirname(os.path.abspath(__file__))
-        cert_path = os.path.join(current_dir, "cert.pem")
-        key_path = os.path.join(current_dir, "key.pem")
 
-        ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-        ssl_context.load_cert_chain(certfile=cert_path, keyfile=key_path)
-
-        async with websockets.serve(eeg_handler, ip, port, ssl=ssl_context):
-            print(f"🔒 Secure WebSocket running at wss://{ip}:{port}")
+        async with websockets.serve(eeg_handler, ip, port):
+            print(f"🌐 WebSocket Server running at ws://{ip}:{port}")
             await asyncio.Future()
     except BrainFlowError as e:
         print("🚨 BrainFlow error:", e)

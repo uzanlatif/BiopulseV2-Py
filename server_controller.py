@@ -5,42 +5,50 @@ import signal
 import os
 import sys
 from fastapi.middleware.cors import CORSMiddleware
+import logging
 
+# Logger setup (optional but useful for debugging)
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("server_manager")
+
+# FastAPI instance
 app = FastAPI(
     title="Server Manager API",
     description="API to manage server scripts from frontend",
     version="1.0.0"
 )
 
-# CORS: allow all origins (adjust in production)
+# CORS setup (allow all for development)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Ganti ke ['http://your-frontend.com'] jika perlu
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Global state
+# Global state to track running process
 process = None
 current_script = None
 
+# Pydantic model for POST body
 class ServerRequest(BaseModel):
     script_name: str  # e.g. "server_mbs_ssl.py"
 
 @app.post("/run")
 def run_server(req: ServerRequest):
     """
-    Jalankan script server baru, hentikan yang lama jika masih jalan.
+    Jalankan script server baru, hentikan yang lama jika masih berjalan.
     """
     global process, current_script
 
-    # Hentikan jika ada server lain sedang jalan
+    # Stop old process if running
     if process and process.poll() is None:
         stop_server()
 
     try:
         script = req.script_name
+        logger.info(f"Starting new server script: {script}")
         process = subprocess.Popen(
             [sys.executable, script],
             preexec_fn=os.setsid if os.name != 'nt' else None,
@@ -53,6 +61,7 @@ def run_server(req: ServerRequest):
             "pid": process.pid
         }
     except Exception as e:
+        logger.error(f"Failed to start script: {e}")
         return {"error": str(e)}
 
 @app.post("/stop")
@@ -64,12 +73,14 @@ def stop_server():
 
     if process and process.poll() is None:
         try:
+            logger.info("Stopping running server script...")
             if os.name == 'nt':
                 process.send_signal(signal.CTRL_BREAK_EVENT)
             else:
                 os.killpg(os.getpgid(process.pid), signal.SIGTERM)
             process.wait(timeout=5)
         except Exception as e:
+            logger.error(f"Error while stopping script: {e}")
             return {"error": str(e)}
         finally:
             process = None
@@ -89,3 +100,11 @@ def get_status():
             "pid": process.pid
         }
     return {"status": "stopped"}
+
+@app.on_event("shutdown")
+def shutdown_event():
+    """
+    Otomatis dipanggil saat Ctrl+C ditekan di terminal Raspberry Pi.
+    """
+    logger.info("Shutdown triggered (Ctrl+C). Cleaning up running process...")
+    stop_server()
