@@ -14,7 +14,7 @@ app = FastAPI(
     version="1.0.0"
 )
 
-# === CORS ===
+# === CORS setup ===
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -23,13 +23,15 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# === Global Process State ===
+# === Global state ===
 process = None
 current_script = None
 
+# === Request schema ===
 class ServerRequest(BaseModel):
     script_name: str  # e.g., "server_mbs.py"
 
+# === Run endpoint ===
 @app.post("/run")
 def run_server(req: ServerRequest):
     global process, current_script
@@ -61,6 +63,7 @@ def run_server(req: ServerRequest):
     except Exception as e:
         return JSONResponse(status_code=500, content={"status": "error", "message": str(e)})
 
+# === Stop endpoint ===
 @app.post("/stop")
 def stop_server():
     global process, current_script
@@ -71,33 +74,49 @@ def stop_server():
                 process.send_signal(signal.CTRL_BREAK_EVENT)
             else:
                 os.killpg(os.getpgid(process.pid), signal.SIGTERM)
-
             process.wait(timeout=5)
         except Exception as e:
-            return {"status": "error", "message": f"Failed to stop: {e}"}
+            return {
+                "status": "error",
+                "message": f"Failed to stop: {e}"
+            }
         finally:
             process = None
             current_script = None
 
-        return {"status": "stopped", "message": "Server stopped successfully."}
+        return {
+            "status": "stopped",
+            "message": "Server stopped successfully."
+        }
 
-    return {"status": "stopped", "message": "No server is currently running."}
+    return {
+        "status": "stopped",
+        "message": "No server is currently running."
+    }
 
+# === Restart endpoint ===
 @app.post("/restart")
 def restart_server(req: ServerRequest):
-    stop_result = stop_server()
+    global process
 
+    stop_result = stop_server()
     if stop_result.get("status") != "stopped":
         return JSONResponse(
             status_code=500,
             content={"status": "error", "message": "Failed to stop server before restarting."}
         )
 
-    # Delay to allow OS cleanup
-    time.sleep(1.5)
+    # Ensure process is fully terminated
+    for _ in range(10):  # up to 3 seconds
+        if process is None or process.poll() is not None:
+            break
+        time.sleep(0.3)
+
+    time.sleep(1.0)  # extra delay for brainflow cleanup
 
     return run_server(req)
 
+# === Status endpoint ===
 @app.get("/status")
 def get_status():
     if process and process.poll() is None:
@@ -115,11 +134,11 @@ def get_status():
         "message": "No server is currently running."
     }
 
-# Graceful shutdown on Ctrl+C
+# === Graceful shutdown on Ctrl+C ===
 def handle_sigint(signal_received, frame):
-    print("SIGINT received. Stopping server...")
+    print("🛑 SIGINT received. Stopping subprocess...")
     response = stop_server()
-    print("Stop result:", response)
+    print("Shutdown result:", response)
     sys.exit(0)
 
 signal.signal(signal.SIGINT, handle_sigint)

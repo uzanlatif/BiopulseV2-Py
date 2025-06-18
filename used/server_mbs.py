@@ -6,14 +6,15 @@ import signal
 import sys
 from brainflow.board_shim import BoardShim, BrainFlowInputParams, BoardIds, BrainFlowError
 
-# === Global setup ===
 board = None
 board_initialized = False
+is_running = True  # Flag to control graceful shutdown
 
 def signal_handler(sig, frame):
+    global is_running
     print("\n🛑 Signal received, cleaning up...")
-    cleanup()
-    sys.exit(0)
+    is_running = False  # Stop the asyncio loop
+    # cleanup() will be called in `finally` inside main()
 
 def cleanup():
     global board, board_initialized
@@ -32,31 +33,27 @@ def cleanup():
 signal.signal(signal.SIGTERM, signal_handler)
 signal.signal(signal.SIGINT, signal_handler)
 
-# === EEG/WebSocket handler ===
 async def eeg_handler(websocket, path):
     print("🔌 Client connected")
     try:
         sampling_rate = board.get_sampling_rate(board_id)
         interval = 1.0 / sampling_rate
-        send_interval = 1.0 / 125  # Target 125 Hz
+        send_interval = 1.0 / 125  # 125Hz
 
-        while True:
-            raw_data = board.get_board_data(3)  # Ambil ~3 sampel (~12 ms @250Hz)
+        while is_running:
+            raw_data = board.get_board_data(3)
             if raw_data.shape[1] == 0:
-                print("[⚠️ WARNING] No data received from board yet.")
                 await asyncio.sleep(0.5)
                 continue
 
             sensor_data = {}
             timestamp_now = time.time()
-
             for ch in eeg_channels:
                 label = channel_names.get(ch, f"CH{ch}")
                 samples = raw_data[ch]
-
                 sensor_data[label] = [
                     {
-                        "y": int(samples[i]),  # ADC raw value
+                        "y": int(samples[i]),
                         "__timestamp__": timestamp_now - (len(samples) - i - 1) * interval
                     }
                     for i in range(len(samples))
@@ -70,9 +67,8 @@ async def eeg_handler(websocket, path):
     except Exception as e:
         print("🚨 Handler error:", e)
 
-# === BrainFlow Config ===
 params = BrainFlowInputParams()
-params.serial_port = '/dev/ttyUSB0'  # Update sesuai perangkat
+params.serial_port = '/dev/ttyUSB0'
 board_id = BoardIds.CYTON_DAISY_BOARD.value
 eeg_channels = BoardShim.get_eeg_channels(board_id)
 
@@ -83,7 +79,6 @@ channel_names = {
     15: "EEG CH15", 16: "EEG CH16"
 }
 
-# === Main WebSocket server (non-SSL) ===
 async def main():
     global board, board_initialized
     board = BoardShim(board_id, params)
@@ -100,16 +95,16 @@ async def main():
         time.sleep(0.5)
 
         board.start_stream()
-        time.sleep(1)
         board_initialized = True
         print("✅ Streaming started")
 
         ip = '10.42.0.1'
         port = 5555
-
         async with websockets.serve(eeg_handler, ip, port):
             print(f"🌐 WebSocket Server running at ws://{ip}:{port}")
-            await asyncio.Future()
+            while is_running:
+                await asyncio.sleep(0.1)
+
     except BrainFlowError as e:
         print("🚨 BrainFlow error:", e)
     except Exception as e:
