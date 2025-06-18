@@ -103,7 +103,7 @@ def restart_server(req: ServerRequest):
     if stop_result.get("status") != "stopped":
         return JSONResponse(
             status_code=500,
-            content={"status": "error", "message": "Failed to stop server before restarting."}
+            content={"status": "error", "message": "Server is stopped, press the restart button to turn on server"}
         )
 
     # Ensure process is fully terminated

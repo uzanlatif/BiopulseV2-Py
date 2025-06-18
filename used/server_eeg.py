@@ -46,8 +46,8 @@ channel_names = {
 async def eeg_handler(websocket, path):
     print("🔌 Client connected")
     try:
-        sampling_rate = board.get_sampling_rate(board_id)
-        interval = 1.0 / sampling_rate
+        target_rate = 125  # Hz
+        interval = 1.0 / target_rate  # 0.008 sec
 
         while True:
             raw_data = board.get_current_board_data(50)
@@ -66,7 +66,7 @@ async def eeg_handler(websocket, path):
                 ]
 
             await websocket.send(json.dumps(sensor_data))
-            await asyncio.sleep(0.01)
+            await asyncio.sleep(interval)
     except websockets.ConnectionClosed:
         print("❌ Client disconnected")
     except Exception as e:

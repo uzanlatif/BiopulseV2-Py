@@ -37,17 +37,17 @@ signal.signal(signal.SIGINT, signal_handler)
 async def eeg_handler(websocket, path):
     print("🔌 Client connected")
     try:
-        sampling_rate = board.get_sampling_rate(board_id)
-        interval = 1.0 / sampling_rate
+        sampling_rate = board.get_sampling_rate(board_id)  # usually 250 Hz for Cyton+Daisy
+        interval = 1.0 / 125  # Output interval for 125 Hz
 
         while True:
-            raw_data = board.get_current_board_data(50)
+            raw_data = board.get_current_board_data(50)  # ~0.2s of data
             sensor_data = {}
             timestamp_now = time.time()
 
             for ch in eeg_channels:
                 label = channel_names.get(ch, f"CH{ch}")
-                samples = raw_data[ch]
+                samples = raw_data[ch][::2]  # Downsample 250 → 125 Hz
                 sensor_data[label] = [
                     {
                         "y": float(val),
@@ -57,7 +57,7 @@ async def eeg_handler(websocket, path):
                 ]
 
             await websocket.send(json.dumps(sensor_data))
-            await asyncio.sleep(0.01)
+            await asyncio.sleep(0.008)  # ~125 Hz update rate
     except websockets.ConnectionClosed:
         print("❌ Client disconnected")
     except Exception as e:
@@ -65,7 +65,7 @@ async def eeg_handler(websocket, path):
 
 # Config and EEG channels
 params = BrainFlowInputParams()
-params.serial_port = '/dev/ttyUSB0'
+params.serial_port = '/dev/ttyUSB0'  # Adjust for your system
 board_id = BoardIds.CYTON_DAISY_BOARD.value
 eeg_channels = BoardShim.get_eeg_channels(board_id)
 channel_names = {
@@ -83,7 +83,7 @@ async def main():
         board_initialized = True
         print("✅ Streaming started")
 
-        ip = '10.42.0.1'
+        ip = '10.42.0.1'  # Adjust to your local IP or '0.0.0.0' for all interfaces
         port = 8888
         async with websockets.serve(eeg_handler, ip, port):
             print(f"🌐 WebSocket Server running at ws://{ip}:{port}")
