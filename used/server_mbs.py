@@ -38,10 +38,10 @@ async def eeg_handler(websocket, path):
     try:
         sampling_rate = board.get_sampling_rate(board_id)
         interval = 1.0 / sampling_rate
-        send_interval = 1.0 / 120  # Target 120 Hz
+        send_interval = 1.0 / 125  # Target 125 Hz
 
         while True:
-            raw_data = board.get_board_data(3)  # Get ~3 samples for ~120 Hz
+            raw_data = board.get_board_data(3)  # Ambil ~3 sampel (~12 ms @250Hz)
             if raw_data.shape[1] == 0:
                 print("[⚠️ WARNING] No data received from board yet.")
                 await asyncio.sleep(0.5)
