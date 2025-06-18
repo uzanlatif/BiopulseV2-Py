@@ -5,6 +5,7 @@ import signal
 import os
 import sys
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 app = FastAPI(
     title="Server Manager API",
@@ -15,7 +16,7 @@ app = FastAPI(
 # === CORS Middleware ===
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Ganti ke ['http://localhost:3000'] jika frontend React di-local
+    allow_origins=["*"],  # Ganti ke ['http://localhost:3000'] jika perlu
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -27,8 +28,7 @@ current_script = None
 
 # === Request Model ===
 class ServerRequest(BaseModel):
-    script_name: str  # e.g. "server_mbs_ssl.py"
-
+    script_name: str  # e.g. "server_mbs.py"
 
 @app.post("/run")
 def run_server(req: ServerRequest):
@@ -60,7 +60,6 @@ def run_server(req: ServerRequest):
     except Exception as e:
         return {"status": "error", "message": str(e)}
 
-
 @app.post("/stop")
 def stop_server():
     """
@@ -84,44 +83,25 @@ def stop_server():
 
     return {"status": "stopped", "message": "No server is currently running."}
 
-
 @app.post("/restart")
 def restart_server(req: ServerRequest):
     """
-    Restart script server: stop and start again.
+    Restart server: stop lalu jalankan ulang script.
     """
-    global process, current_script
+    stop_result = stop_server()
 
-    try:
-        # Stop jika sedang berjalan
-        if process and process.poll() is None:
-            stop_server()
-
-        # Mulai ulang
-        script = req.script_name
-        process_args = [sys.executable, script]
-        process = subprocess.Popen(
-            process_args,
-            preexec_fn=os.setsid if os.name != 'nt' else None,
-            creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if os.name == 'nt' else 0
+    if stop_result.get("status") not in ["stopped", "success"]:
+        return JSONResponse(
+            status_code=500,
+            content={"status": "error", "message": "Failed to stop the server."}
         )
-        current_script = script
 
-        return {
-            "status": "restarted",
-            "script": script,
-            "pid": process.pid,
-            "message": f"{script} restarted (PID: {process.pid})"
-        }
-
-    except Exception as e:
-        return {"status": "error", "message": str(e)}
-
+    return run_server(req)
 
 @app.get("/status")
 def get_status():
     """
-    Ambil status server saat ini.
+    Ambil status script server saat ini.
     """
     if process and process.poll() is None:
         return {
@@ -137,7 +117,6 @@ def get_status():
         "pid": None,
         "message": "No server is currently running."
     }
-
 
 # === Signal Handler (Ctrl+C)
 def handle_sigint(signal_received, frame):
