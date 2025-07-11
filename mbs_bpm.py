@@ -3,12 +3,11 @@ import websockets
 import json
 import time
 import signal
-import sys
+import numpy as np
 from brainflow.board_shim import BoardShim, BrainFlowInputParams, BoardIds, BrainFlowError
 from scipy.signal import butter, filtfilt, find_peaks, hilbert
-import numpy as np
 
-# --- Global Setup ---
+# === Setup ===
 board = None
 board_initialized = False
 is_running = True
@@ -26,6 +25,7 @@ channel_names = {
     15: "EEG CH15", 16: "EEG CH16"
 }
 
+# === Graceful Exit ===
 def signal_handler(sig, frame):
     global is_running
     print("\n🛑 Signal received, cleaning up...")
@@ -34,12 +34,11 @@ def signal_handler(sig, frame):
 signal.signal(signal.SIGTERM, signal_handler)
 signal.signal(signal.SIGINT, signal_handler)
 
-# --- Filtering ---
+# === Filter & HR Utilities ===
 def bandpass_filter(sig, fs, low, high):
     b, a = butter(2, [low / (fs / 2), high / (fs / 2)], btype='band')
     return filtfilt(b, a, sig)
 
-# --- HR Extractors ---
 def hr_from_ecg(ecg, fs):
     try:
         b, a = butter(1, [5 / (0.5 * fs), 15 / (0.5 * fs)], btype='band')
@@ -71,13 +70,13 @@ def hr_from_pcg(pcg, fs):
     except:
         return None
 
-# --- WebSocket Handler ---
+# === WebSocket Handler ===
 async def eeg_handler(websocket, path):
     print("🔌 Client connected")
     try:
         fs = BoardShim.get_sampling_rate(board_id)
         interval = 1.0 / fs
-        send_interval = 1.0 / 125  # adjust if needed
+        send_interval = 1.0 / 125  # 125Hz
 
         while is_running:
             raw_data = board.get_board_data(3)
@@ -86,30 +85,59 @@ async def eeg_handler(websocket, path):
                 continue
 
             sensor_data = {}
-            timestamp_now = time.time()
-
             hr_data = {'ECG': None, 'PPG': None, 'PCG': None}
+            timestamp_now = time.time()
 
             for ch in eeg_channels:
                 label = channel_names.get(ch, f"CH{ch}")
                 samples = raw_data[ch]
+
+                # === Normalisasi per channel ===
+                if label == "PPG":
+                    signal = -samples
+                    signal = signal - np.min(signal)
+                    signal = signal / (np.max(signal) + 1e-8)
+                    signal = signal * 100
+                elif label in ["ECG", "PCG", "EMG1", "EMG2",
+                               "EEG CH11", "EEG CH12", "EEG CH13",
+                               "EEG CH14", "EEG CH15", "EEG CH16"]:
+                    signal = samples - np.min(samples)
+                    signal = signal / (np.max(signal) + 1e-8)
+                    signal = signal * 100
+                elif label == "MYOMETER":
+                    signal = (samples - 109840) / 30000
+                elif label == "SPIRO":
+                    signal = samples - 1100000
+                    signal = 0.010698 * signal - 9.3359e-9 * signal**2
+                elif label == "TEMPERATURE":
+                    signal = -samples
+                    signal = signal - np.min(signal)
+                elif label == "NIBP":
+                    signal = samples - np.min(samples)
+                elif label == "OXYGEN":
+                    signal = -samples
+                    signal = signal - np.min(signal)
+                else:
+                    signal = samples
+
+                # === Build signal packet ===
                 sensor_data[label] = [
                     {
-                        "y": float(samples[i]),
-                        "__timestamp__": timestamp_now - (len(samples) - i - 1) * interval
+                        "y": float(signal[i]),
+                        "__timestamp__": timestamp_now - (len(signal) - i - 1) * interval
                     }
-                    for i in range(len(samples))
+                    for i in range(len(signal))
                 ]
 
-                # Extract HR if applicable
+                # === Hitung HR ===
                 if label == "ECG":
-                    hr_data['ECG'] = hr_from_ecg(samples, fs)
+                    hr_data['ECG'] = hr_from_ecg(signal, fs)
                 elif label == "PPG":
-                    hr_data['PPG'] = hr_from_ppg(samples, fs)
+                    hr_data['PPG'] = hr_from_ppg(signal, fs)
                 elif label == "PCG":
-                    hr_data['PCG'] = hr_from_pcg(samples, fs)
+                    hr_data['PCG'] = hr_from_pcg(signal, fs)
 
-            # Send combined data
+            # === Kirim via WebSocket ===
             await websocket.send(json.dumps({
                 "signals": sensor_data,
                 "heartrate": hr_data,
@@ -123,7 +151,7 @@ async def eeg_handler(websocket, path):
     except Exception as e:
         print("🚨 Handler error:", e)
 
-# --- Main ---
+# === Main Function ===
 async def main():
     global board, board_initialized
     board = BoardShim(board_id, params)
