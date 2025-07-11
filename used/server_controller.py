@@ -124,7 +124,7 @@ def get_status():
             "status": "running",
             "script": current_script,
             "pid": process.pid,
-            "message": f"{current_script} is running (PID: {process.pid})"
+            # "message": f"{current_script} is running (PID: {process.pid})"
         }
 
     return {
