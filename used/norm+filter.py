@@ -53,7 +53,7 @@ signal.signal(signal.SIGINT, signal_handler)
 def safe_filter(data, b, a):
     padlen = 3 * max(len(a), len(b))
     if len(data) <= padlen:
-        return None  # too short
+        return None
     return filtfilt(b, a, data)
 
 def notch_filter(data, freq, fs, quality=30):
@@ -116,9 +116,9 @@ async def eeg_handler(websocket, path):
         send_interval = 1.0 / 125  # ~125Hz
 
         while is_running:
-            raw_data = board.get_board_data()
-            if raw_data.shape[1] == 0:
-                await asyncio.sleep(0.1)
+            raw_data = board.get_current_board_data(250)  # ✅ ambil 250 sampel terakhir
+            if raw_data.shape[1] < 10:
+                await asyncio.sleep(0.05)
                 continue
 
             sensor_data = {}
@@ -130,7 +130,6 @@ async def eeg_handler(websocket, path):
 
                 filtered = notch_filter(samples, 60.0, fs)
                 if filtered is None or len(filtered) < 10:
-                    print(f"⚠️ Skipped {label}: data too short ({len(samples)})")
                     continue
 
                 normed = normalize(filtered)
@@ -143,21 +142,24 @@ async def eeg_handler(websocket, path):
                     for i in range(len(normed))
                 ]
 
-            # HR estimation (safe)
+            if not sensor_data:
+                await asyncio.sleep(0.05)
+                continue
+
             ecg = raw_data[1]
             ppg = raw_data[2]
             pcg = raw_data[3]
 
             hr_values = {
-                "ECG": pan_tompkins_hr(ecg, fs) if len(ecg) > 100 else '--',
-                "PPG": estimate_hr_from_ppg(ppg, fs) if len(ppg) > 100 else '--',
-                "PCG": estimate_hr_from_pcg(pcg, fs) if len(pcg) > 100 else '--',
+                "ECG": pan_tompkins_hr(ecg, fs) if len(ecg) > 100 else None,
+                "PPG": estimate_hr_from_ppg(ppg, fs) if len(ppg) > 100 else None,
+                "PCG": estimate_hr_from_pcg(pcg, fs) if len(pcg) > 100 else None,
             }
 
             payload = {
-                "__timestamp__": timestamp_now,
-                "HR": hr_values,
-                **sensor_data
+                "signals": sensor_data,
+                "heartrate": hr_values,
+                "timestamp": timestamp_now
             }
 
             await websocket.send(json.dumps(payload))
