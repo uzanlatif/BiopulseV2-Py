@@ -49,7 +49,7 @@ def cleanup():
 signal.signal(signal.SIGTERM, signal_handler)
 signal.signal(signal.SIGINT, signal_handler)
 
-# --- Filters and HR Estimators ---
+# --- Filter Utils ---
 def safe_filter(data, b, a):
     padlen = 3 * max(len(a), len(b))
     if len(data) <= padlen:
@@ -70,6 +70,7 @@ def normalize(data):
         return np.zeros_like(data)
     return (data - np.min(data)) / (np.max(data) - np.min(data))
 
+# --- HR Estimators ---
 def pan_tompkins_hr(ecg, fs):
     try:
         b, a = butter(1, [5 / (0.5 * fs), 15 / (0.5 * fs)], btype='band')
@@ -113,47 +114,36 @@ async def eeg_handler(websocket, path):
     try:
         fs = BoardShim.get_sampling_rate(board_id)
         interval = 1.0 / fs
-        send_interval = 1.0 / 125  # ~125Hz
+        send_interval = 1.0 / 125
 
         while is_running:
-            raw_data = board.get_current_board_data(250)  # ✅ ambil 250 sampel terakhir
+            raw_data = board.get_current_board_data(250)
             if raw_data.shape[1] < 10:
                 await asyncio.sleep(0.05)
                 continue
 
-            sensor_data = {}
             timestamp_now = time.time()
+            sensor_data = {}
 
             for ch in eeg_channels:
                 label = channel_names.get(ch, f"CH{ch}")
                 samples = raw_data[ch]
-
                 filtered = notch_filter(samples, 60.0, fs)
                 if filtered is None or len(filtered) < 10:
                     continue
-
                 normed = normalize(filtered)
-
                 sensor_data[label] = [
-                    {
-                        "x": timestamp_now - (len(normed) - i - 1) * interval,
-                        "y": round(float(normed[i]), 6)
-                    }
+                    {"x": timestamp_now - (len(normed) - i - 1) * interval, "y": float(round(normed[i], 6))}
                     for i in range(len(normed))
                 ]
 
             if not sensor_data:
-                await asyncio.sleep(0.05)
                 continue
 
-            ecg = raw_data[1]
-            ppg = raw_data[2]
-            pcg = raw_data[3]
-
             hr_values = {
-                "ECG": pan_tompkins_hr(ecg, fs) if len(ecg) > 100 else None,
-                "PPG": estimate_hr_from_ppg(ppg, fs) if len(ppg) > 100 else None,
-                "PCG": estimate_hr_from_pcg(pcg, fs) if len(pcg) > 100 else None,
+                "ECG": pan_tompkins_hr(raw_data[1], fs),
+                "PPG": estimate_hr_from_ppg(raw_data[2], fs),
+                "PCG": estimate_hr_from_pcg(raw_data[3], fs)
             }
 
             payload = {
@@ -164,28 +154,23 @@ async def eeg_handler(websocket, path):
 
             await websocket.send(json.dumps(payload))
             await asyncio.sleep(send_interval)
-
     except websockets.ConnectionClosed:
         print("❌ Client disconnected")
     except Exception as e:
         print("🚨 Handler error:", e)
 
-# --- Main Server ---
+# --- Main Entry ---
 async def main():
     global board, board_initialized
     board = BoardShim(board_id, params)
-
     try:
         print("🔄 Preparing BrainFlow session...")
         board.prepare_session()
-
-        gain_config = (
+        board.config_board(
             'x1060100Xx2010000Xx3010000Xx4060000Xx5060000Xx6010000Xx7010000Xx8010000X'
             'xQ010000XxW010000XxE010000XxR010000XxT010000XxY010000XxU010000XxI010000X'
         )
-        board.config_board(gain_config)
         time.sleep(0.5)
-
         board.start_stream()
         board_initialized = True
         print("✅ Streaming started")
@@ -194,13 +179,9 @@ async def main():
         port = 5555
         async with websockets.serve(eeg_handler, ip, port):
             print(f"🌐 WebSocket Server running at ws://{ip}:{port}")
-            while is_running:
-                await asyncio.sleep(0.1)
-
-    except BrainFlowError as e:
-        print("🚨 BrainFlow error:", e)
+            await asyncio.Future()
     except Exception as e:
-        print("🚨 Unexpected error:", e)
+        print("🚨 Error:", e)
     finally:
         cleanup()
 
