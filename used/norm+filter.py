@@ -50,24 +50,32 @@ signal.signal(signal.SIGTERM, signal_handler)
 signal.signal(signal.SIGINT, signal_handler)
 
 # --- Filters and HR Estimators ---
+def safe_filter(data, b, a):
+    padlen = 3 * max(len(a), len(b))
+    if len(data) <= padlen:
+        return None  # too short
+    return filtfilt(b, a, data)
+
 def notch_filter(data, freq, fs, quality=30):
     nyq = 0.5 * fs
     b, a = iirnotch(freq / nyq, quality)
-    return filtfilt(b, a, data)
+    return safe_filter(data, b, a)
+
+def bandpass_filter(sig, fs, low, high):
+    b, a = butter(2, [low / (fs / 2), high / (fs / 2)], btype='band')
+    return safe_filter(sig, b, a)
 
 def normalize(data):
     if np.ptp(data) == 0:
         return np.zeros_like(data)
     return (data - np.min(data)) / (np.max(data) - np.min(data))
 
-def bandpass_filter(sig, fs, low, high):
-    b, a = butter(2, [low / (fs / 2), high / (fs / 2)], btype='band')
-    return filtfilt(b, a, sig)
-
 def pan_tompkins_hr(ecg, fs):
     try:
         b, a = butter(1, [5 / (0.5 * fs), 15 / (0.5 * fs)], btype='band')
-        x = filtfilt(b, a, ecg)
+        x = safe_filter(ecg, b, a)
+        if x is None:
+            return '--'
         x = np.convolve(x, np.array([1, 2, 0, -2, -1]) / 8, mode='same')
         x = x ** 2
         x = np.convolve(x, np.ones(int(0.15 * fs)) / int(0.15 * fs), mode='same')
@@ -79,6 +87,8 @@ def pan_tompkins_hr(ecg, fs):
 def estimate_hr_from_ppg(ppg, fs):
     try:
         f = bandpass_filter(ppg, fs, 0.5, 5)
+        if f is None:
+            return '--'
         norm_f = (f - np.mean(f)) / np.std(f)
         peaks, _ = find_peaks(norm_f, distance=int(0.5 * fs), prominence=0.8)
         return int(60.0 / np.mean(np.diff(peaks) / fs)) if len(peaks) > 1 else '--'
@@ -88,6 +98,8 @@ def estimate_hr_from_ppg(ppg, fs):
 def estimate_hr_from_pcg(pcg, fs):
     try:
         f = bandpass_filter(pcg, fs, 20, 45)
+        if f is None:
+            return '--'
         env = np.abs(hilbert(f))
         norm_env = (env - np.mean(env)) / np.std(env)
         peaks, _ = find_peaks(norm_env, distance=int(0.6 * fs), prominence=1.0)
@@ -116,8 +128,11 @@ async def eeg_handler(websocket, path):
                 label = channel_names.get(ch, f"CH{ch}")
                 samples = raw_data[ch]
 
-                # Filter + Normalize
                 filtered = notch_filter(samples, 60.0, fs)
+                if filtered is None or len(filtered) < 10:
+                    print(f"⚠️ Skipped {label}: data too short ({len(samples)})")
+                    continue
+
                 normed = normalize(filtered)
 
                 sensor_data[label] = [
@@ -128,13 +143,17 @@ async def eeg_handler(websocket, path):
                     for i in range(len(normed))
                 ]
 
-            # --- Heart Rate Estimation ---
-            hr_values = {}
-            hr_values['ECG'] = pan_tompkins_hr(raw_data[1], fs)
-            hr_values['PPG'] = estimate_hr_from_ppg(raw_data[2], fs)
-            hr_values['PCG'] = estimate_hr_from_pcg(raw_data[3], fs)
+            # HR estimation (safe)
+            ecg = raw_data[1]
+            ppg = raw_data[2]
+            pcg = raw_data[3]
 
-            # Final payload with timestamp
+            hr_values = {
+                "ECG": pan_tompkins_hr(ecg, fs) if len(ecg) > 100 else '--',
+                "PPG": estimate_hr_from_ppg(ppg, fs) if len(ppg) > 100 else '--',
+                "PCG": estimate_hr_from_pcg(pcg, fs) if len(pcg) > 100 else '--',
+            }
+
             payload = {
                 "__timestamp__": timestamp_now,
                 "HR": hr_values,
@@ -149,7 +168,7 @@ async def eeg_handler(websocket, path):
     except Exception as e:
         print("🚨 Handler error:", e)
 
-# --- Main Server Loop ---
+# --- Main Server ---
 async def main():
     global board, board_initialized
     board = BoardShim(board_id, params)
